@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Note:** This file is automatically maintained by [release-please](https://github.com/googleapis/release-please). Do not edit manually.
 
+## [2.0.2](https://github.com/microsoft/hve-core/compare/hve-core-v2.0.1...hve-core-v2.0.2) (2026-01-29)
+
+
+### 🐛 Bug Fixes
+
+* exclude test fixtures from markdown link checker ([#345](https://github.com/microsoft/hve-core/issues/345)) ([58147f9](https://github.com/microsoft/hve-core/commit/58147f9cad987da1cae98dc5d4a403bd141ccec7))
+
+
+### ♻️ Refactoring
+
+* **scripts:** extract orchestration function for Prepare-Extension testability ([#344](https://github.com/microsoft/hve-core/issues/344)) ([9fd4bd1](https://github.com/microsoft/hve-core/commit/9fd4bd1e95c737af01103c9b9dc99523bacf0c4d))
+
 ## [2.0.1](https://github.com/microsoft/hve-core/compare/hve-core-v2.0.0...hve-core-v2.0.1) (2026-01-28)
 
 
