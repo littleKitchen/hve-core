@@ -150,7 +150,7 @@ Follow #file:../../instructions/sample/house.instructions.md and use `skill-one`
 
 Describe 'Get-AgentSurfaceSkill' -Tag 'Unit' {
     BeforeAll {
-        $script:SurfaceRoot = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
+        $script:SurfaceRoot = Join-Path $TestDrive 'surface-repo'
         New-AgentFixture -Root $script:SurfaceRoot
 
         $agentsDir = Join-Path $script:SurfaceRoot '.github/agents/sample'
@@ -171,10 +171,6 @@ agents:
 
 Use `skill-one`.
 '@
-    }
-
-    AfterAll {
-        Remove-Item -LiteralPath $script:SurfaceRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     It 'Includes skills named by the agent and by its declared subagents' {
