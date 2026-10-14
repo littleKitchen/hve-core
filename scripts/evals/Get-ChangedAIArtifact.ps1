@@ -38,6 +38,12 @@
 .PARAMETER RepoRoot
     Repository root. Defaults to the git toplevel or this script's parent directory.
 
+.PARAMETER EquivalenceSubject
+    Agents whose baseline-equivalence surface is checked against the changed paths.
+    A change inside a skill directory that the equivalence harness materializes for
+    one of these agents adds the agent to `affectedAgents`, even when the dependency
+    map does not record the skill. Defaults to `rpi-agent`.
+
 .EXAMPLE
     pwsh -File scripts/evals/Get-ChangedAIArtifact.ps1 -ChangeSetPath logs/eval-change-set.json
     Classify the frozen comparison and emit logs/changed-ai-artifacts.json.
@@ -62,7 +68,10 @@ param(
     [string]$OutFile,
 
     [Parameter(Mandatory = $false)]
-    [string]$RepoRoot
+    [string]$RepoRoot,
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$EquivalenceSubject = @('rpi-agent')
 )
 
 Set-StrictMode -Version Latest
@@ -71,6 +80,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Modules/ArtifactDetection.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Modules/AffectedAgents.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Modules/EvalChangeSet.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/EquivalenceEnvironment.psm1') -Force
 
 function Resolve-RepoRoot {
     [CmdletBinding()]
@@ -134,6 +144,70 @@ function Get-TrackedFileChangeSet {
     }
 }
 
+function Get-EquivalenceSurfaceAgent {
+    <#
+    .SYNOPSIS
+    Returns the equivalence subjects whose materialized skill surface a change touches.
+
+    .DESCRIPTION
+    The dependency map behind Get-AffectedAgentSlugs records only skills referenced
+    by path. The baseline-equivalence harness also resolves skills an agent names in
+    backticks, which is how the RPI agent references `rpi-research` and its peers, and
+    copies those whole skill directories into the surface it measures. Checking the
+    changed paths against the directories the harness materializes keeps the
+    equivalence gate and the harness in agreement. The check covers only the
+    equivalence subjects, not every agent in the dependency map.
+
+    .PARAMETER ChangedPath
+    Repository-relative changed paths, including the previous path of renames.
+
+    .PARAMETER Subject
+    Agent slugs whose equivalence surface is checked.
+
+    .PARAMETER RepoRoot
+    Repository root.
+
+    .OUTPUTS
+    [string[]] Subjects with at least one changed path inside their skill surface.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$ChangedPath,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Subject,
+
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $agentsRoot = Join-Path $RepoRoot '.github/agents'
+    $touched = [System.Collections.Generic.List[string]]::new()
+    foreach ($slug in $Subject) {
+        if ([string]::IsNullOrWhiteSpace($slug)) { continue }
+        $agentFile = Get-ChildItem -LiteralPath $agentsRoot -Recurse -File -Filter "$slug.agent.md" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if (-not $agentFile) { continue }
+        $agentRelative = $agentFile.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+
+        $skillPrefixes = @(Get-AgentSurfaceSkill -RepoRoot $RepoRoot -AgentRelativePath $agentRelative | ForEach-Object { "$_/" })
+        foreach ($path in $ChangedPath) {
+            $normalized = ([string]$path -replace '\\', '/').TrimStart('/')
+            $inSurface = @($skillPrefixes | Where-Object { $normalized.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+            if ($inSurface) {
+                $touched.Add($slug)
+                break
+            }
+        }
+    }
+
+    return , [string[]]$touched.ToArray()
+}
+
 function Invoke-ChangedArtifactScan {
     <#
     .SYNOPSIS
@@ -148,6 +222,9 @@ function Invoke-ChangedArtifactScan {
     .PARAMETER RepoRoot
     Repository root.
 
+    .PARAMETER EquivalenceSubject
+    Agents whose baseline-equivalence skill surface is checked against the changes.
+
     .OUTPUTS
     [hashtable] `@{ baseRef; headRef; artifacts = @(...) }`.
     #>
@@ -161,7 +238,9 @@ function Invoke-ChangedArtifactScan {
         [switch]$AllTracked,
 
         [Parameter(Mandatory = $true)]
-        [string]$RepoRoot
+        [string]$RepoRoot,
+
+        [string[]]$EquivalenceSubject = @('rpi-agent')
     )
 
     if ($PSCmdlet.ParameterSetName -eq 'AllTracked') {
@@ -187,6 +266,8 @@ function Invoke-ChangedArtifactScan {
     $affectedAgents = [string[]]@()
     if ($changedPaths.Count -gt 0) {
         $affectedAgents = Get-AffectedAgentSlugs -ChangedFiles $changedPaths.ToArray() -RepoRoot $RepoRoot
+        $surfaceAgents = Get-EquivalenceSurfaceAgent -ChangedPath $changedPaths.ToArray() -Subject $EquivalenceSubject -RepoRoot $RepoRoot
+        $affectedAgents = [string[]]@(@($affectedAgents) + @($surfaceAgents) | Sort-Object -Unique)
     }
 
     return @{
@@ -209,10 +290,10 @@ if ($MyInvocation.InvocationName -ne '.') {
 
     try {
         $manifest = if ($AllTracked) {
-            Invoke-ChangedArtifactScan -AllTracked -RepoRoot $resolvedRepoRoot
+            Invoke-ChangedArtifactScan -AllTracked -RepoRoot $resolvedRepoRoot -EquivalenceSubject $EquivalenceSubject
         }
         else {
-            Invoke-ChangedArtifactScan -ChangeSetPath $ChangeSetPath -RepoRoot $resolvedRepoRoot
+            Invoke-ChangedArtifactScan -ChangeSetPath $ChangeSetPath -RepoRoot $resolvedRepoRoot -EquivalenceSubject $EquivalenceSubject
         }
     }
     catch {

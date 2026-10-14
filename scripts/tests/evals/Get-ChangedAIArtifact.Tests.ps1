@@ -265,6 +265,54 @@ Describe 'AI artifact canonical input' -Tag 'Unit' {
     }
 }
 
+Describe 'Equivalence surface gate' -Tag 'Unit' {
+    BeforeAll {
+        # The subject names its skill in backticks, as the real RPI agent does, so the
+        # path-only dependency map records no skill for it.
+        $script:SurfaceRepo = Join-Path $TestDrive ('surface-' + [Guid]::NewGuid().ToString('N'))
+        $agentDir = Join-Path $script:SurfaceRepo '.github/agents/hve-core'
+        $null = New-Item -ItemType Directory -Path $agentDir -Force
+        Set-Content -LiteralPath (Join-Path $agentDir 'rpi-agent.agent.md') -Value "---`nname: RPI Agent`n---`n`nActivate ``rpi-research`` first.`n"
+        foreach ($skill in @('rpi/rpi-research', 'shared/unrelated')) {
+            $skillDir = Join-Path $script:SurfaceRepo ".github/skills/$skill"
+            $null = New-Item -ItemType Directory -Path (Join-Path $skillDir 'references') -Force
+            Set-Content -LiteralPath (Join-Path $skillDir 'SKILL.md') -Value 'skill'
+            Set-Content -LiteralPath (Join-Path $skillDir 'references/notes.md') -Value 'notes'
+        }
+
+        $script:ScanChange = {
+            param([string]$Path, [string[]]$Subject = @('rpi-agent'))
+
+            $changeSetPath = Join-Path $TestDrive ('surface-change-' + [Guid]::NewGuid().ToString('N') + '.json')
+            @{
+                schemaVersion = '1.0'; baseRef = 'a' * 40; headRef = 'b' * 40; comparisonBase = 'c' * 40
+                changes = @(@{ status = 'M'; path = $Path; previousPath = $null })
+            } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $changeSetPath
+            return Invoke-ChangedArtifactScan -ChangeSetPath $changeSetPath -RepoRoot $script:SurfaceRepo -EquivalenceSubject $Subject
+        }
+    }
+
+    It 'marks the subject affected when a backtick-named skill changes' {
+        $result = & $script:ScanChange '.github/skills/rpi/rpi-research/SKILL.md'
+        @($result.affectedAgents) | Should -BeExactly @('rpi-agent')
+    }
+
+    It 'marks the subject affected when a file inside that skill directory changes' {
+        $result = & $script:ScanChange '.github/skills/rpi/rpi-research/references/notes.md'
+        @($result.affectedAgents) | Should -BeExactly @('rpi-agent')
+    }
+
+    It 'leaves the subject unaffected by a skill outside its surface' {
+        $result = & $script:ScanChange '.github/skills/shared/unrelated/SKILL.md'
+        $result.affectedAgents | Should -HaveCount 0
+    }
+
+    It 'checks only the configured equivalence subjects' {
+        $result = & $script:ScanChange '.github/skills/rpi/rpi-research/SKILL.md' @()
+        $result.affectedAgents | Should -HaveCount 0
+    }
+}
+
 Describe 'AI artifact full-scope input' -Tag 'Unit' {
     BeforeAll {
         $script:FullScopeRepo = Join-Path $TestDrive ('full-' + [Guid]::NewGuid())
